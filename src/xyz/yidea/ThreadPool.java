@@ -3,6 +3,8 @@ package xyz.yidea;
 import java.util.LinkedList;
 import java.util.List;
 
+import xyz.yidea.TaskQueue.ExceedMaxException;
+
 public class ThreadPool extends Thread{
 	private final static int DEFAULT_MIN_THREAD_SIZE = 5;
 	
@@ -10,32 +12,37 @@ public class ThreadPool extends Thread{
 	
 	private final static int DEFAULT_MAX_THREAD_SIZE = 10;
 	
+	private final static int DEFAULT_MAX_TASK_SIZE = 30;
+	
 	private int min_thread_size = 0;
 	
 	private int active_thread_size = 0;
 	
 	private int max_thread_size = 0;
 	
-	private List<Task> taskQueue = null;
+	private int max_task_size = 0;
 	
-	private List<ChildThread> pools = null;
+	private TaskQueue taskQueue = null;      //任务队列
+	
+	private List<ChildThread> pools = null;       //线程池
 	
 	private boolean destory = false;
 	
 	public ThreadPool(){
-		this(DEFAULT_MIN_THREAD_SIZE,DEFAULT_ACTIVE_THREAD_SIZE,DEFAULT_MAX_THREAD_SIZE);
+		this(DEFAULT_MIN_THREAD_SIZE,DEFAULT_ACTIVE_THREAD_SIZE,DEFAULT_MAX_THREAD_SIZE,DEFAULT_MAX_TASK_SIZE);
 	}
 	
 	public ThreadPool(int min_thread_size,int active_thread_size,
-			int max_thread_size){
+			int max_thread_size,int max_task_size){
 		this.min_thread_size = min_thread_size;
 		this.active_thread_size = active_thread_size;
 		this.max_thread_size = max_thread_size;
+		this.max_task_size = max_task_size;
 		createPool();
 	}
 	
 	private void createPool(){
-		taskQueue = new LinkedList<Task>();
+		taskQueue = new TaskQueue(max_task_size);
 		pools = new LinkedList<ChildThread>();
 		for(int i = 0;i<min_thread_size;i++){
 			ChildThread t = new ChildThread(taskQueue);
@@ -50,7 +57,9 @@ public class ThreadPool extends Thread{
 	public void run(){
 		while(!destory){
 			if(getFreeThreadSize() >= active_thread_size){
-				((LinkedList<ChildThread>)pools).removeFirst();
+				synchronized(taskQueue){
+					((LinkedList<ChildThread>)pools).removeFirst();
+				}
 				System.out.println("destory one thread");
 				synchronized(lock){
 					try{
@@ -72,11 +81,15 @@ public class ThreadPool extends Thread{
 		}
 	}
 	
+	/**
+	 * destroy thread pool and close all child thread in thread pool,
+	 * close every thread for loop
+	 */
 	public void destory(){
-		this.destory = false;
+		this.destory = true;   //close thread pool thread
 		synchronized(taskQueue){
 			for(ChildThread t : pools){
-				t.close();
+				t.close();       //close child thread one by one
 				t.interrupt();
 			}
 		}
@@ -89,11 +102,16 @@ public class ThreadPool extends Thread{
 		}
 		
 		if(threadSize >= min_thread_size && threadSize < max_thread_size){
+			//create new thread to process extra task
 			createNewThread();
 		}
 		
 		synchronized(taskQueue){
-			((LinkedList<Task>)taskQueue).addFirst(task);
+			try {
+				taskQueue.addFirst(task);
+			} catch (ExceedMaxException e) {
+				e.printStackTrace();
+			}
 			taskQueue.notify();
 		}
 	}
@@ -106,6 +124,10 @@ public class ThreadPool extends Thread{
 		System.out.println("new thread have create success!");
 	}
 	
+	/**
+	 * get thread pool current running thread size
+	 * @return running thread size
+	 */
 	public int getRunningThreadSize(){
 		int count = 0;
 		synchronized(taskQueue){
@@ -132,18 +154,30 @@ public class ThreadPool extends Thread{
 		return count;
 	}
 	
+	
+	/**
+	 * every thread must implement this interface
+	 * @author 杨永华
+	 *
+	 */
 	public static interface Task{
 		public void run();
 	}
 	
+	
+	/**
+	 * current runner state thread
+	 * @author 杨永华
+	 *
+	 */
 	private class ChildThread extends Thread{
 		private boolean state = false;
 		
 		private boolean closed = false;
 		
-		private List<Task> pools = null;
+		private TaskQueue pools = null;
 		
-		public ChildThread(List<Task> pools){
+		public ChildThread(TaskQueue pools){
 			System.out.println("Thread Name:" + getName());
 			this.pools = pools;
 		}
@@ -159,7 +193,7 @@ public class ThreadPool extends Thread{
 							e.printStackTrace();
 						}
 					}else{
-						task = ((LinkedList<Task>)pools).removeLast();
+						task = pools.removeLast();
 					}
 				}
 				
@@ -171,10 +205,18 @@ public class ThreadPool extends Thread{
 			}
 		}
 		
+		/**
+		 * close thread by set boolean variable
+		 */
 		public void close(){
 			closed = true;
 		}
 		
+		
+		/**
+		 * get worker thread current state
+		 * @return
+		 */
 		public boolean getCurrentThreadState(){
 			return state;
 		}

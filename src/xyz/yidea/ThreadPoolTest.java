@@ -8,7 +8,7 @@ public class ThreadPoolTest {
 	
 	@Before
 	public void init(){
-		pool = new ThreadPool(10,15,30);
+		pool = new ThreadPool(10,15,30,50);
 	}
 	
 	@After
